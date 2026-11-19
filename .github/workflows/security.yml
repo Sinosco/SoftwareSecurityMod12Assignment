@@ -3,6 +3,10 @@
 name: DevSecOps Scan Gate
 on: [push, pull_request] # Run on push and PR
 
+# Least privilege: the GITHUB_TOKEN can only read repository contents
+permissions:
+  contents: read
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -10,37 +14,30 @@ jobs:
     steps:
       # 1. Checkout Code (Needs full history for Gitleaks)
       - name: Checkout Repository
-        uses: actions/checkout@v4 # Temporary v4 usage, will be pinned in Part 2
-        with: { fetch-depth: 0 }
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false # don't leave the token in .git/config
 
-      # ==============================
       # GATE: Secret Scan (Gitleaks)
-      # CRITICAL FLAW. Must fail the build immediately if secrets are found.
-      # ==============================
       - name: Gitleaks Secret Check (GATE)
         run: |
           echo "Running secret scan with Gitleaks..."
           docker run -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:latest \
             detect --source /repo --exit-code 1
 
-      # ==============================
       # GATE: SAST (Semgrep)
-      # Code flaw check (e.g., shell=True). Must fail the build if high risk flaws are found.
-      # We will use a threshold here to make it a gate.
-      # ==============================
       - name: Static Analysis (SAST) using Semgrep (GATE)
+        if: always() # run even if the previous gate failed
         run: |
           echo "Running SAST analysis with Semgrep..."
           pip install semgrep
-          # Using --error ensures that if the scanner finds an issue, it exits non-zero.
           semgrep scan --config auto --error
 
-      # ==============================
       # REPORT: Dependency Scan (Trivy)
-      # Non-critical findings report only. Must NOT fail the build.
-      # ==============================
       - name: Dependency Vulnerability Check (REPORT)
+        if: always() # run even if a gate failed, so findings are always visible
         run: |
           echo "Running dependency scan with Trivy..."
           docker run -v "${{ github.workspace }}:/repo" aquasec/trivy:latest \
-            fs --scanners vuln --exit-code 0 /repo # The exit-code 0 ensures success regardless of findings
+            fs --scanners vuln --exit-code 0 /repo
